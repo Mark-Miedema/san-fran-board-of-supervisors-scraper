@@ -10,6 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 import logging
 from datetime import datetime
+from tqdm import tqdm  # Importing tqdm for progress bars
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -87,12 +88,19 @@ def convert_pdf_to_html(pdf_path, html_path):
 # Function to rename and save the file
 def save_meeting_file(date_str, event, link, file_type):
     try:
-        date_obj = datetime.strptime(date_str, '%A, %B %d, %Y - %I:%M%p')
+        # Remove '(All day)' text and the time component
+        date_str = date_str.replace('(All day)', '').strip()
+        date_parts = date_str.split('-')
+        date_str = date_parts[0].strip()
+
+        # Parse the date
+        date_obj = datetime.strptime(date_str, '%A, %B %d, %Y')
         year = date_obj.strftime('%Y')
         month = date_obj.strftime('%b')
-        formatted_date = date_obj.strftime('%b %d, %Y')
+        day = date_obj.strftime('%d')
+        formatted_date = f"{month} {day}, {year}"  # Use shorter date format
         meeting_type = "Regular" if "Board of Supervisors" in event else "Special"
-        file_name = f"San_Fran_Board_of_Supervisors_File_{formatted_date}_Meeting {meeting_type} {file_type}.html"
+        file_name = f"{formatted_date}_Meeting {file_type}.html"
 
         year_dir = os.path.join(base_output_dir, year)
         month_dir = os.path.join(year_dir, month_map[month])
@@ -112,6 +120,8 @@ def save_meeting_file(date_str, event, link, file_type):
                 else:
                     convert_pdf_to_html(file_path, file_path)
 
+    except ValueError as ve:
+        logger.error(f"ValueError in saving meeting file: {ve}")
     except Exception as e:
         logger.error(f"Exception in saving meeting file: {e}")
 
@@ -129,34 +139,36 @@ events = []
 # Extract data from the first page
 extract_data_from_page()
 
-# Iterate over all pages
-while True:
-    try:
-        # Check if there is a "Next" button and it is enabled
-        next_button = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//a[contains(@title, 'Go to next page')]"))
-        )
-        if 'disabled' in next_button.get_attribute('class'):
+# Iterate over all pages with progress bar
+with tqdm(desc="Navigating pages", unit="page") as pbar:
+    while True:
+        try:
+            # Check if there is a "Next" button and it is enabled
+            next_button = driver.find_elements(By.XPATH, "//a[contains(@title, 'Go to next page')]")
+            if not next_button or 'disabled' in next_button[0].get_attribute('class'):
+                logger.info("No more pages to navigate.")
+                break
+
+            logger.info("Navigating to the next page.")
+            # Click the "Next" button
+            next_button[0].click()
+            pbar.update(1)
+
+            # Wait for the new page to load
+            time.sleep(2)
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "table.views-table"))
+            )
+
+            # Extract data from the new page
+            extract_data_from_page()
+
+        except Exception as e:
+            logger.error(f"Exception occurred during pagination: {e}")
             break
 
-        # Click the "Next" button
-        next_button.click()
-
-        # Wait for the new page to load
-        time.sleep(2)
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "table.views-table"))
-        )
-
-        # Extract data from the new page
-        extract_data_from_page()
-
-    except Exception as e:
-        logger.error(f"Exception occurred during pagination: {e}")
-        break
-
-# Process each event
-for event in events:
+# Process each event with progress bar
+for event in tqdm(events, desc="Processing events", unit="event"):
     date_time = event['date_time']
     event_name = event['event']
     link = event['link']
