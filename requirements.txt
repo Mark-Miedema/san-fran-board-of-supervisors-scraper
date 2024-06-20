@@ -1,0 +1,4 @@
+requests
+PyMuPDF
+selenium
+webdriver_manager
